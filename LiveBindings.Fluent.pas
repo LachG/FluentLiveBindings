@@ -26,7 +26,14 @@ type
   TBindDirection = (TargetToSource, SourceToTarget, Bidirectional);
   TTargetType = (List, Grid, Control);
 
-  IComponentSource = interface
+  TBindCompArray = array of TContainedBindComponent;
+
+  IBaseSource = interface
+    ['{708A5F75-46B8-4190-A888-6CDFFE69E3AF}']
+    function BindComps : TBindCompArray;
+  end;
+
+  IComponentSource = interface(IBaseSource)
   ['{225A2C76-E6C0-40EC-9396-69150EBE96C8}']
     function Active : IComponentSource;
     function Inactive : IComponentSource;
@@ -35,7 +42,7 @@ type
     function FromSourceToComponent : IComponentSource;
   end;
 
-  IBindSourceSource = interface
+  IBindSourceSource = interface(IBaseSource)
   ['{D25D3FE7-9BB1-4E4E-8510-9457762AF067}']
     function Active : IBindSourceSource;
     function Inactive : IBindSourceSource;
@@ -48,7 +55,7 @@ type
     function FromDataToComponent : IFieldSource;
   end;
 
-  IExpressionSource = interface
+  IExpressionSource = interface(IBaseSource)
   ['{56247E48-C735-4FD8-831E-6AB36C0C3C71}']
     function Active : IExpressionSource;
     function Inactive : IExpressionSource;
@@ -134,18 +141,23 @@ type
     property DefaultColumnWidth: Integer read FDefaultColumnWidth write FDefaultColumnWidth;
   end;
 
-
-  TBaseSource = class(TInterfacedObject)
+  TBaseSource = class(TInterfacedObject, IBaseSource)
+  private
+    FBindComps : TBindCompArray;
   protected
     FBindingState : TBindingState;
+    function MakeBindComps : TBindCompArray; virtual; abstract;
   public
     constructor Create(BindingState : TBindingState); reintroduce;
     destructor Destroy; override;
+    procedure BeforeDestruction; override;
+    function BindComps : TBindCompArray;
   end;
 
   TComponentSource = class(TBaseSource, IComponentSource)
+  protected
+    function MakeBindComps : TBindCompArray; override;
   public
-    destructor Destroy; override;
     function Active : IComponentSource;
     function Inactive : IComponentSource;
     function BiDirectional : IComponentSource;
@@ -154,23 +166,26 @@ type
   end;
 
   TBindSourceSource = class(TBaseSource, IBindSourceSource)
+  protected
+    function MakeBindComps : TBindCompArray; override;
   public
-    destructor Destroy; override;
     function Active : IBindSourceSource;
     function Inactive : IBindSourceSource;
   end;
 
   TFieldSource = class(TBindSourceSource, IFieldSource)
+  protected
+    function MakeBindComps : TBindCompArray; override;
   public
-    destructor Destroy; override;
     function BiDirectional : IFieldSource;
     function FromComponentToData : IFieldSource;
     function FromDataToComponent : IFieldSource;
   end;
 
   TExpressionSource = class(TBaseSource, IExpressionSource)
+  protected
+    function MakeBindComps : TBindCompArray; override;
   public
-    destructor Destroy; override;
     function Active : IExpressionSource;
     function Inactive : IExpressionSource;
     function BiDirectional : IExpressionSource;
@@ -247,10 +262,12 @@ begin
   Result := self;
 end;
 
-destructor TComponentSource.Destroy;
+function TComponentSource.MakeBindComps: TBindCompArray;
 var
   LLink : TLinkControlToProperty;
 begin
+  Result := nil;
+
   if (FBindingState.Direction = TBindDirection.TargetToSource) or (FBindingState.Direction = TBindDirection.Bidirectional) then
   begin
     LLink := TLinkControlToProperty.Create(FBindingState.BindingOwner);
@@ -262,6 +279,7 @@ begin
     LLink.CustomFormat := FBindingState.Format;
     LLink.CustomParse := FBindingState.Parse;
     LLink.Active := FBindingState.Active;
+    Result := Result + [LLink];
   end;
 
   if (FBindingState.Direction = TBindDirection.SourceToTarget) or (FBindingState.Direction = TBindDirection.Bidirectional) then
@@ -275,9 +293,8 @@ begin
     LLink.CustomFormat := FBindingState.Format;
     LLink.CustomParse := FBindingState.Parse;
     LLink.Active := FBindingState.Active;
+    Result := Result + [LLink];
   end;
-
-  inherited;
 end;
 
 function TComponentSource.FromComponentToSource: IComponentSource;
@@ -304,7 +321,6 @@ begin
   FBindingState := BindingState;
 end;
 
-
 constructor TBaseSource.Create(BindingState: TBindingState);
 begin
   FBindingState := BindingState;
@@ -314,6 +330,20 @@ destructor TBaseSource.Destroy;
 begin
   FBindingState.Free;
   inherited;
+end;
+
+procedure TBaseSource.BeforeDestruction;
+begin
+  inherited;
+  if not Assigned(FBindComps) then
+    FBindComps := MakeBindComps;
+end;
+
+function TBaseSource.BindComps: TBindCompArray;
+begin
+  if not Assigned(FBindComps) then
+    FBindComps := MakeBindComps;
+  Result := FBindComps;
 end;
 
 function TComponentTarget.Format(CustomFormat: string): IComponentTarget;
@@ -343,10 +373,11 @@ begin
   Result := self;
 end;
 
-destructor TBindSourceSource.Destroy;
+function TBindSourceSource.MakeBindComps: TBindCompArray;
 var
   LGridLink : TLinkGridToDataSource;
 begin
+  Result := nil;
   if FBindingState.TargetType = Grid then
   begin
     LGridLink := TLinkGridToDataSource.Create(FBindingState.BindingOwner);
@@ -356,9 +387,8 @@ begin
     LGridLink.DefaultColumnWidth := FBindingState.DefaultColumnWidth;
 //    LGridLink.Columns :=
     LGridLink.Active := FBindingState.Active;
+    Result := Result + [LGridLink];
   end;
-
-  inherited;
 end;
 
 function TBindSourceSource.Inactive: IBindSourceSource;
@@ -462,7 +492,7 @@ begin
   Result := self;
 end;
 
-destructor TExpressionSource.Destroy;
+function TExpressionSource.MakeBindComps: TBindCompArray;
 var
   LLink : TBindExpression;
 begin
@@ -478,8 +508,7 @@ begin
     TBindDirection.Bidirectional: LLink.Direction := dirBidirectional;
   end;
   LLink.Active := FBindingState.Active;
-
-  inherited;
+  Result := [LLink];
 end;
 
 function TExpressionSource.FromComponentToData: IExpressionSource;
@@ -519,11 +548,13 @@ begin
   Result := self;
 end;
 
-destructor TFieldSource.Destroy;
+function TFieldSource.MakeBindComps: TBindCompArray;
 var
   LLink : TLinkControlToField;
   LListLink : TLinkListControlToField;
 begin
+  Result := nil;
+
   if FBindingState.TargetType = List then
   begin
     LListLink := TLinkListControlToField.Create(FBindingState.BindingOwner);
@@ -539,6 +570,7 @@ begin
       TBindDirection.Bidirectional: LListLink.Direction := linkBidirectional;
     end;
     LListLink.Active := FBindingState.Active;
+    Result := Result + [LListLink];
   end
   else if FBindingState.TargetType = Control then
   begin
@@ -556,9 +588,8 @@ begin
     end;
     LLink.Track := FBindingState.Track;
     LLink.Active := FBindingState.Active;
+    Result := Result + [LLink];
   end;
-
-  inherited;
 end;
 
 function TFieldSource.FromComponentToData: IFieldSource;
